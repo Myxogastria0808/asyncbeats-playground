@@ -1,4 +1,5 @@
 use crate::{
+    application::streamer::wave_streamer,
     errors::{app::AppError, handler::HandlerError},
     models::shared_state::RwLockSharedState,
 };
@@ -33,15 +34,30 @@ pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError>
                     Message::Text(text) => {
                         // receive connection request from client
                         let msg = text.to_string();
-                        if msg != "open" {
+                        if msg != "open" && msg != "accept" {
                             tracing::info!("Received unexpected text: {:?}", msg);
                             return Err(HandlerError::UnexpectedMessageError(msg).into());
                         }
                         tracing::info!("Received text: {:?}", msg);
-                    }
-                    Message::Binary(binary) => {
-                        tracing::error!("Received binary: {:?}", binary);
-                        return Err(HandlerError::UnexpectedMessageTypeError.into());
+
+                        // step1: analyze audio file and send audio info to middle-server
+                        if msg == "open" {
+                            // analyze audio file
+                            let audio_info = crate::application::analyzer::wave_analyzer()?;
+                            // send audio info to middle-server
+                            socket
+                                .send(Message::Text(
+                                    format!("{} {}", audio_info.channel, audio_info.chunk_size)
+                                        .into(),
+                                ))
+                                .await
+                                .map_err(HandlerError::AxumError)?;
+                        }
+
+                        //step2: receive connection acceptance from middle-server and send PCM data to middle-server
+                        if msg == "accept" {
+                            wave_streamer(&mut socket).await?;
+                        }
                     }
                     Message::Close(close) => {
                         tracing::info!("Client disconnected: {:?}", close);

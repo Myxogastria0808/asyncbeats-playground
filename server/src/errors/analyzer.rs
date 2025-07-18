@@ -4,15 +4,15 @@ use axum::http::StatusCode;
 #[derive(Debug, thiserror::Error)]
 pub enum AnalyzerError {
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    HoundError(#[from] hound::Error),
 }
 
 impl From<AnalyzerError> for AppError {
     fn from(error: AnalyzerError) -> Self {
         match error {
-            AnalyzerError::IoError(e) => AppError {
+            AnalyzerError::HoundError(e) => AppError {
                 status_code: StatusCode::INTERNAL_SERVER_ERROR,
-                message: format!("IoError: {e}"),
+                message: format!("HoundError: {e}"),
             },
         }
     }
