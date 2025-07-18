@@ -1,2 +1,11 @@
+# Rust
+/server/target
+/middle-server/target
+/client/target
+
 # Nix
 /.direnv
+
+#Audio
+*.wav
+
