@@ -1,7 +1,10 @@
 # Rust
 /server/target
 /middle-server/target
-/client/target
+
+# JavaScript
+/client/node_modules
+/client/dist
 
 # Nix
 /.direnv
