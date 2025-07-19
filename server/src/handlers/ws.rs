@@ -47,7 +47,7 @@ pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError>
                             // send audio info to middle-server
                             socket
                                 .send(Message::Text(
-                                    format!("{} {}", audio_info.channel, audio_info.chunk_size)
+                                    format!("{} {}", audio_info.channel, audio_info.sample_rate)
                                         .into(),
                                 ))
                                 .await

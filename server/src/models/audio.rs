@@ -1,4 +1,4 @@
 pub struct AudioInfo {
-    pub channel: u16,
-    pub chunk_size: u16,
+    pub channel: u32,
+    pub sample_rate: u32,
 }

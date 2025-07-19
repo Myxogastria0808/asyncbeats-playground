@@ -15,6 +15,10 @@ pub enum HandlerError {
     AxumError(#[from] axum::Error),
     #[error(transparent)]
     TokioTungsteniteError(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error(transparent)]
+    ParseIntError(#[from] std::num::ParseIntError),
+    #[error("AudioInfoError: {0}")]
+    AudioInfoError(String),
 }
 
 impl From<HandlerError> for AppError {
@@ -43,6 +47,14 @@ impl From<HandlerError> for AppError {
             HandlerError::TokioTungsteniteError(e) => AppError {
                 status_code: StatusCode::INTERNAL_SERVER_ERROR,
                 message: format!("TokioTungsteniteError: {e}"),
+            },
+            HandlerError::ParseIntError(e) => AppError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("ParseIntError: {e}"),
+            },
+            HandlerError::AudioInfoError(e) => AppError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("AudioInfoError: {e}"),
             },
         }
     }

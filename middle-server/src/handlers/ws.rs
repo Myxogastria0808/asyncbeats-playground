@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crate::{
     errors::{app::AppError, handler::HandlerError},
     models::shared_state::RwLockSharedState,
@@ -12,8 +14,8 @@ use tokio_tungstenite::connect_async;
 
 //* Constant values *//
 static SERVER_URL: &str = "ws://localhost:5000";
-static WINDOW_SIZE: usize = 1000;
-static SLIDE_SIZE: usize = 500;
+static WINDOW_SIZE: u64 = 200;
+static SLIDE_SIZE: u64 = 100;
 
 // handler
 pub async fn websocket_handler(
@@ -32,6 +34,11 @@ pub async fn websocket_handler(
 
 // websocket
 pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError> {
+    // sliding window
+    let mut counter: u64 = 0;
+    let mut stock_buffer: VecDeque<Vec<u8>> = VecDeque::new();
+    let mut send_buffer: Vec<u8> = Vec::new();
+
     // connect to server
     let (mut ws_stream, _) = connect_async(SERVER_URL)
         .await
@@ -49,15 +56,23 @@ pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError>
                             axum::extract::ws::Message::Text(text) => {
                                 // receive connection request from client
                                 let msg = text.to_string();
-                                if msg != "open" {
+                                if msg != "open" && msg != "accept" {
                                     tracing::info!("Received unexpected text: {:?}", msg);
                                     return Err(HandlerError::UnexpectedMessageError(msg).into());
                                 }
                                 tracing::info!("Received text: {:?}", msg);
-                                // send connection request to server
-                                // This program uses tokio-tungstenite to send message
-                                ws_stream.send("open".into()).await
-                                    .map_err(HandlerError::TokioTungsteniteError)?;
+                                //* step1: receive open message from client and send to server *//
+                                if msg == "open" {
+                                    // send open message to server
+                                    ws_stream.send(tokio_tungstenite::tungstenite::Message::Text("open".into())).await
+                                        .map_err(HandlerError::TokioTungsteniteError)?;
+                                }
+                                //* step4: receive accept message from client and send to server *//
+                                if msg == "accept" {
+                                    // send accept message to server
+                                    ws_stream.send("accept".into()).await
+                                        .map_err(HandlerError::TokioTungsteniteError)?;
+                                }
                             }
                             axum::extract::ws::Message::Close(close) => {
                                 tracing::info!("Client disconnected: {:?}", close);
@@ -70,6 +85,7 @@ pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError>
                                         reason: close_frame.reason.to_string().into(),
                                     }
                                 });
+                                // send close frame to server
                                 ws_stream.send(tokio_tungstenite::tungstenite::Message::Close(tungstenite_close)).await
                                     .map_err(HandlerError::TokioTungsteniteError)?;
 
@@ -100,22 +116,58 @@ pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError>
             server_msg = ws_stream.try_next() => {
                 match server_msg {
                     Ok(Some(server_msg)) => {
-                        tracing::info!("Received message from server: {:?}", server_msg);
-
                         match server_msg {
                             tokio_tungstenite::tungstenite::Message::Text(text) => {
-                                // こりあえずそのままテキストをclientに転送する
-                                let audio_info = text.to_string();
-                                socket.send(axum::extract::ws::Message::Text(audio_info.into())).await.map_err(HandlerError::AxumError)?;
-                                //TODO: test
-                                // server に acceptを送信する
-                                ws_stream.send("accept".into()).await
-                                    .map_err(HandlerError::TokioTungsteniteError)?;
+                                tracing::info!("Received text: {:?}", text);
+                                //* step2: receive audio info from server *//
+                                //TODO 以下のパース処理をまとめる
+                                let audio_info_vec: Vec<u64> = String::from_utf8_lossy(text.as_bytes())
+                                    .split(' ')
+                                    .map(|s| s.parse::<u64>().map_err(HandlerError::ParseIntError))
+                                    .collect::<Result<Vec<u64>, HandlerError>>()?;
+                                // validate audio info
+                                if audio_info_vec.len() != 2 {
+                                    return Err(HandlerError::AudioInfoError(text.to_string()).into());
+                                }
+                                let channel = match audio_info_vec.first().cloned() {
+                                    Some(channel) => channel,
+                                    None => return Err(HandlerError::AudioInfoError(text.to_string()).into()),
+                                };
+                                let sample_rate = match audio_info_vec.get(1).cloned() {
+                                    Some(sample_rate) => sample_rate,
+                                    None => return Err(HandlerError::AudioInfoError(text.to_string()).into()),
+                                };
+
+                                //* step3: send audio info to client *//
+                                socket.send(axum::extract::ws::Message::Text(format!("{channel} {sample_rate}").into())).await.map_err(HandlerError::AxumError)?;
                             }
                             tokio_tungstenite::tungstenite::Message::Binary(bin) => {
-                                // こりあえずそのままPCMデータをclientに転送する
-                                socket.send(axum::extract::ws::Message::Binary(bin)).await.map_err(HandlerError::AxumError)?;
+                                tracing::info!("counter: {}", counter);
+                                //* step5: receive binary and send it to client *//
+
+                                //* step6: do sliding window *//
+                                if counter > WINDOW_SIZE {
+                                    //* send buffer *//
+                                    for _ in 0..SLIDE_SIZE {
+                                        if let Some(buf) = stock_buffer.pop_front() {
+                                            send_buffer.extend(buf);
+                                        }
+                                    }
+                                    //* step7: send binary data to client with window size *//
+                                    socket.send(axum::extract::ws::Message::Binary(send_buffer.clone().into())).await.map_err(HandlerError::AxumError)?;
+
+                                    // reset counter
+                                    counter -= SLIDE_SIZE;
+                                    // reset send buffer
+                                    send_buffer.clear();
+                                } else {
+                                    //* collect buffer *//
+                                    counter += 1;
+                                    stock_buffer.push_back(bin.to_vec());
+                                }
+
                             }
+
                             tokio_tungstenite::tungstenite::Message::Close(close) => {
                                 tracing::info!("Server disconnected: {:?}", close);
 
@@ -125,6 +177,7 @@ pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError>
                                     code: axum::extract::ws::CloseCode::from(u16::from(close_frame.code)),
                                     reason: close_frame.reason.to_string().into(),
                                 });
+                                // send close frame to client
                                 socket.send(axum::extract::ws::Message::Close(axum_close)).await.map_err(HandlerError::AxumError)?;
 
                                 break;
