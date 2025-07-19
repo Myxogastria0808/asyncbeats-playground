@@ -9,9 +9,9 @@ pub mod errors;
 pub mod handlers;
 pub mod models;
 
-// Domain
-const IP_ADDRESS: &str = "localhost";
-const PORT: u16 = 7000;
+//* Constant values *//
+static IP_ADDRESS: &str = "localhost";
+static PORT: u16 = 7000;
 
 #[tokio::main]
 async fn main() -> Result<(), RootError> {

@@ -44,7 +44,7 @@ pub async fn wave_streamer(socket: &mut WebSocket) -> Result<(), StreamerError> 
         }
 
         // send PCM data
-        (*socket)
+        socket
             .send(axum::extract::ws::Message::Binary(buf.into()))
             .await
             .map_err(StreamerError::AxumError)?;

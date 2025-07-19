@@ -10,6 +10,11 @@ use axum::{
 use futures_util::{TryStreamExt, sink::SinkExt};
 use tokio_tungstenite::connect_async;
 
+//* Constant values *//
+static SERVER_URL: &str = "ws://localhost:5000";
+static WINDOW_SIZE: usize = 1000;
+static SLIDE_SIZE: usize = 500;
+
 // handler
 pub async fn websocket_handler(
     State(shared_state): State<RwLockSharedState>,
@@ -28,10 +33,10 @@ pub async fn websocket_handler(
 // websocket
 pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError> {
     // connect to server
-    let (mut ws_stream, _) = connect_async("ws://localhost:5000")
+    let (mut ws_stream, _) = connect_async(SERVER_URL)
         .await
         .map_err(HandlerError::TokioTungsteniteError)?;
-    tracing::info!("WebSocket connection established");
+    tracing::info!("webSocket connection established");
 
     loop {
         tokio::select! {
@@ -97,9 +102,18 @@ pub async fn websocket_processing(mut socket: WebSocket) -> Result<(), AppError>
                     Ok(Some(server_msg)) => {
                         tracing::info!("Received message from server: {:?}", server_msg);
 
-                        // こりあえずそのままPCMデータをclientに転送する
                         match server_msg {
+                            tokio_tungstenite::tungstenite::Message::Text(text) => {
+                                // こりあえずそのままテキストをclientに転送する
+                                let audio_info = text.to_string();
+                                socket.send(axum::extract::ws::Message::Text(audio_info.into())).await.map_err(HandlerError::AxumError)?;
+                                //TODO: test
+                                // server に acceptを送信する
+                                ws_stream.send("accept".into()).await
+                                    .map_err(HandlerError::TokioTungsteniteError)?;
+                            }
                             tokio_tungstenite::tungstenite::Message::Binary(bin) => {
+                                // こりあえずそのままPCMデータをclientに転送する
                                 socket.send(axum::extract::ws::Message::Binary(bin)).await.map_err(HandlerError::AxumError)?;
                             }
                             tokio_tungstenite::tungstenite::Message::Close(close) => {
