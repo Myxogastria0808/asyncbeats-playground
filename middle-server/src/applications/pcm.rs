@@ -15,6 +15,7 @@ pub async fn pcm_data_processing(
     let mut send_buffer: Vec<u8> = Vec::new();
 
     //* step6: receive binary from sender (producer) *//
+    //* step7: do sliding window (while loop) *//
     //? Receiver (Consumer) //
     while let Some(bin) = pcm_rx.recv().await {
         //* collect buffer *//
@@ -23,9 +24,8 @@ pub async fn pcm_data_processing(
 
         tracing::info!("counter: {}", counter);
 
-        //* step7: do sliding window *//
         if counter >= window_size {
-            // スライド幅分だけバッファを準備
+            // prepare send buffer
             for _ in 0..slide_size {
                 if let Some(buf) = stock_buffer.pop_front() {
                     send_buffer.extend(buf);
