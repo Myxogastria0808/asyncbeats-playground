@@ -9,7 +9,7 @@ pub mod errors;
 pub mod handlers;
 pub mod models;
 
-//* Constant values *//
+//* constant values *//
 static IP_ADDRESS: &str = "localhost";
 static PORT: u16 = 7000;
 

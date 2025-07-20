@@ -1,4 +1,1 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-pub type RwLockSharedState = Arc<RwLock<i32>>;
+pub type RwLockSharedState = std::sync::Arc<tokio::sync::RwLock<i32>>;

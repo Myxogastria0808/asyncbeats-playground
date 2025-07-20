@@ -19,6 +19,10 @@ pub enum HandlerError {
     ParseIntError(#[from] std::num::ParseIntError),
     #[error("AudioInfoError: {0}")]
     AudioInfoError(String),
+    #[error(transparent)]
+    MpscSenderError(#[from] tokio::sync::mpsc::error::SendError<Vec<u8>>),
+    #[error(transparent)]
+    TokioJoinError(#[from] tokio::task::JoinError),
 }
 
 impl From<HandlerError> for AppError {
@@ -55,6 +59,14 @@ impl From<HandlerError> for AppError {
             HandlerError::AudioInfoError(e) => AppError {
                 status_code: StatusCode::INTERNAL_SERVER_ERROR,
                 message: format!("AudioInfoError: {e}"),
+            },
+            HandlerError::MpscSenderError(e) => AppError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("MpscSenderError: {e}"),
+            },
+            HandlerError::TokioJoinError(e) => AppError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("TokioJoinError: {e}"),
             },
         }
     }
