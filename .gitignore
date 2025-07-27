@@ -1,10 +1,16 @@
 # Rust
 /server/target
+/server-tmp/target
 /middle-server/target
+/middle-server-tmp/target
+/pyo3-sample/target
+
 
 # JavaScript
 /client/node_modules
+/client-tmp/node_modules
 /client/dist
+/client-tmp/dist
 
 # Nix
 /.direnv

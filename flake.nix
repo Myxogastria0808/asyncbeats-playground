@@ -30,6 +30,10 @@
               # JavaScript
               nodejs
               corepack
+              # python
+              python312
+              python312Packages.librosa
+              # maturin
               # Rust
               openssl
               pkg-config

@@ -1,210 +1,369 @@
-import { useState, useRef, useCallback } from "react";
-import "./App.css";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 
-const MIDDLE_SERVER_URL = "ws://localhost:7000";
-// 再生を開始するために最低限必要なバッファ内のチャンク数
-const BUFFER_PLAYBACK_THRESHOLD = 5;
+// Windowインターフェースを拡張して、webkitAudioContextの型定義を追加
+// これにより、(window as any) を使わずに型安全なアクセスが可能になります。
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
 
-function App() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [status, setStatus] = useState("Disconnected");
-  const [audioInfo, setAudioInfo] = useState<{
-    channels: number;
-    sampleRate: number;
-  } | null>(null);
+// スタイルを定義
+const styles: { [key: string]: React.CSSProperties } = {
+  container: {
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    maxWidth: "800px",
+    margin: "40px auto",
+    padding: "20px",
+    backgroundColor: "#f7f9fc",
+    borderRadius: "12px",
+    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
+    color: "#333",
+  },
+  title: {
+    color: "#1a237e",
+    textAlign: "center",
+    marginBottom: "30px",
+  },
+  controlPanel: {
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    marginBottom: "20px",
+    flexWrap: "wrap",
+  },
+  input: {
+    flex: 1,
+    padding: "12px",
+    border: "1px solid #ccc",
+    borderRadius: "8px",
+    fontSize: "16px",
+    minWidth: "250px",
+  },
+  button: {
+    padding: "12px 24px",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "16px",
+    fontWeight: "bold",
+    cursor: "pointer",
+    transition: "background-color 0.3s, transform 0.1s",
+  },
+  connectButton: {
+    backgroundColor: "#4caf50",
+    color: "white",
+  },
+  disconnectButton: {
+    backgroundColor: "#f44336",
+    color: "white",
+  },
+  statusPanel: {
+    backgroundColor: "white",
+    padding: "20px",
+    borderRadius: "8px",
+    border: "1px solid #e0e0e0",
+  },
+  statusGrid: {
+    display: "grid",
+    gridTemplateColumns: "150px 1fr",
+    gap: "12px",
+    alignItems: "center",
+  },
+  statusLabel: {
+    fontWeight: "bold",
+    color: "#555",
+  },
+  statusValue: {
+    wordBreak: "break-all",
+    backgroundColor: "#eee",
+    padding: "6px 10px",
+    borderRadius: "6px",
+  },
+};
 
-  // --- useRefで管理する変数群 ---
-  const ws = useRef<WebSocket | null>(null);
-  const audioContext = useRef<AudioContext | null>(null);
-  // 受信したPCMチャンクを溜めておくキュー (バッファ)
-  const bufferQueue = useRef<ArrayBuffer[]>([]);
-  // 次の音声チャンクを再生する開始時間
-  const nextStartTime = useRef<number>(0);
-  // 再生処理のインターバルID
-  const playerIntervalId = useRef<number | null>(null);
+/**
+ * @type AudioInfo
+ * @description サーバーから受信するオーディオ情報の型定義
+ * @property {number} channel - チャンネル数 (e.g., 1 for mono, 2 for stereo)
+ * @property {number} sample_rate - サンプルレート (e.g., 44100)
+ */
+type AudioInfo = {
+  channel: number;
+  sample_rate: number;
+};
+
+// 再生を開始するために必要なバッファの数を定義
+const PLAYBACK_BUFFER_THRESHOLD = 5;
+
+const App: React.FC = () => {
+  // --- State Hooks ---
+  const [url, setUrl] = useState<string>("ws://localhost:8080");
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [statusMessage, setStatusMessage] = useState<string>("未接続");
+  const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
+  const [bufferSize, setBufferSize] = useState<number>(0);
+
+  // --- Ref Hooks ---
+  const webSocketRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const pcmBufferRef = useRef<Float32Array[]>([]);
+  const isPlayingRef = useRef<boolean>(false);
+  const audioInfoRef = useRef<AudioInfo | null>(null);
 
   /**
-   * 再生ループのメイン処理。定期的に呼び出される。
+   * @function handleDisconnect
+   * @description WebSocket接続を切断し、関連する状態をすべて初期化する
    */
-  const playerTick = useCallback(() => {
-    if (!audioContext.current || !audioInfo) return;
-
-    // 前のチャンクの再生が終わり、かつバッファに次のデータがある場合に再生処理を行う
-    const safetyMargin = 0.1; // 100msの安全マージン
-    if (
-      audioContext.current.currentTime > nextStartTime.current - safetyMargin &&
-      bufferQueue.current.length > 0
-    ) {
-      const arrayBuffer = bufferQueue.current.shift()!; // バッファからチャンクを1つ取り出す
-
-      // --- デコード処理 ---
-      const pcmData = new Int16Array(arrayBuffer);
-      const frameCount = pcmData.length / audioInfo.channels;
-      if (frameCount <= 0) return;
-
-      const audioBuffer = audioContext.current.createBuffer(
-        audioInfo.channels,
-        frameCount,
-        audioContext.current.sampleRate
-      );
-
-      // デインターリーブ
-      for (let ch = 0; ch < audioInfo.channels; ch++) {
-        const channelData = audioBuffer.getChannelData(ch);
-        for (let i = 0; i < frameCount; i++) {
-          channelData[i] = pcmData[i * audioInfo.channels + ch] / 32768.0;
-        }
-      }
-
-      // --- 再生スケジューリング ---
-      const source = audioContext.current.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContext.current.destination);
-
-      const currentTime = audioContext.current.currentTime;
-      // nextStartTimeが過去の時刻なら、現在時刻を基準に再設定
-      const startTime =
-        nextStartTime.current > currentTime
-          ? nextStartTime.current
-          : currentTime;
-
-      source.start(startTime);
-      console.log(
-        `[Player] Scheduled chunk to play at ${startTime.toFixed(
-          2
-        )}s. Buffer size: ${bufferQueue.current.length}`
-      );
-
-      // 次のチャンクの開始時刻を更新
-      nextStartTime.current = startTime + audioBuffer.duration;
+  const handleDisconnect = useCallback(() => {
+    if (webSocketRef.current) {
+      webSocketRef.current.close();
+      webSocketRef.current = null;
     }
-  }, [audioInfo]); // audioInfoがセットされたらこの関数が再生成される
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(console.error);
+      audioContextRef.current = null;
+    }
+    setIsConnected(false);
+    setAudioInfo(null);
+    audioInfoRef.current = null;
+    setStatusMessage("切断されました");
+    setBufferSize(0);
+    pcmBufferRef.current = [];
+    isPlayingRef.current = false;
+  }, []);
 
   /**
-   * 再生ループを開始する
+   * @function playNextChunk
+   * @description pcmBufferから次のオーディオチャンクを再生する。
    */
-  const startPlayer = useCallback(() => {
-    if (playerIntervalId.current !== null) return; // すでに開始されている場合は何もしない
-    console.log("[Player] Starting player loop.");
-    // 50msごとにplayerTickを実行
-    playerIntervalId.current = window.setInterval(playerTick, 50);
-  }, [playerTick]);
+  const playNextChunk = useCallback(() => {
+    if (!isPlayingRef.current || pcmBufferRef.current.length === 0) {
+      isPlayingRef.current = false;
+      setStatusMessage("バッファが空です。データ受信待機中...");
+      return;
+    }
+
+    const audioContext = audioContextRef.current;
+    const currentAudioInfo = audioInfoRef.current;
+
+    if (!audioContext || !currentAudioInfo) {
+      console.error(
+        "再生を試みましたが、AudioContextまたはAudioInfoがありません。"
+      );
+      isPlayingRef.current = false;
+      return;
+    }
+
+    const pcmData = pcmBufferRef.current.shift()!;
+    setBufferSize(pcmBufferRef.current.length);
+
+    const frameCount = pcmData.length / currentAudioInfo.channel;
+    const audioBuffer = audioContext.createBuffer(
+      currentAudioInfo.channel,
+      frameCount,
+      currentAudioInfo.sample_rate
+    );
+
+    if (currentAudioInfo.channel === 1) {
+      audioBuffer.copyToChannel(pcmData, 0);
+    } else {
+      for (let ch = 0; ch < currentAudioInfo.channel; ch++) {
+        const channelData = new Float32Array(frameCount);
+        for (let i = 0; i < frameCount; i++) {
+          channelData[i] = pcmData[i * currentAudioInfo.channel + ch];
+        }
+        audioBuffer.copyToChannel(channelData, ch);
+      }
+    }
+
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioContext.destination);
+    source.onended = playNextChunk;
+    source.start();
+
+    setStatusMessage(
+      `チャンクを再生中... 残りバッファ: ${pcmBufferRef.current.length}`
+    );
+  }, []);
 
   /**
-   * 再生ループを停止する
+   * @function startPlayback
+   * @description Web Audio APIを利用してPCMデータの再生を開始する
    */
-  const stopPlayer = () => {
-    if (playerIntervalId.current === null) return;
-    console.log("[Player] Stopping player loop.");
-    window.clearInterval(playerIntervalId.current);
-    playerIntervalId.current = null;
-  };
+  const startPlayback = useCallback(() => {
+    const currentAudioInfo = audioInfoRef.current;
+    if (isPlayingRef.current || !currentAudioInfo) return;
+
+    if (!audioContextRef.current) {
+      // ★★★★★ 修正点 ★★★★★
+      // (window as any) を使わずに、型安全な方法でwebkitAudioContextにアクセス
+      const AudioCtor = window.AudioContext || window.webkitAudioContext;
+      // ★★★★★★★★★★★★★★★★
+      if (!AudioCtor) {
+        setStatusMessage(
+          "エラー: このブラウザはWeb Audio APIをサポートしていません。"
+        );
+        return;
+      }
+      audioContextRef.current = new AudioCtor({
+        sampleRate: currentAudioInfo.sample_rate,
+      });
+    }
+
+    if (audioContextRef.current.state === "suspended") {
+      audioContextRef.current.resume();
+    }
+
+    isPlayingRef.current = true;
+    setStatusMessage("再生を開始します");
+    playNextChunk();
+  }, [playNextChunk]);
 
   /**
-   * サーバーへの接続を開始
+   * @function handleConnect
+   * @description WebSocketで接続し、イベントハンドラを設定する
    */
   const handleConnect = () => {
-    // 既存の接続やバッファをリセット
-    ws.current?.close();
-    bufferQueue.current = [];
-    nextStartTime.current = 0;
+    if (webSocketRef.current) return;
 
-    if (!audioContext.current) {
-      audioContext.current = new AudioContext();
-    }
-    if (audioContext.current.state === "suspended") {
-      audioContext.current.resume();
-    }
+    try {
+      const ws = new WebSocket(url);
+      ws.binaryType = "arraybuffer";
+      webSocketRef.current = ws;
+      setStatusMessage(`接続試行中: ${url}`);
 
-    setStatus("Connecting...");
-    ws.current = new WebSocket(MIDDLE_SERVER_URL);
-
-    ws.current.onopen = () => {
-      setStatus('Connection established. Sending "open"...');
-      ws.current?.send("open");
-    };
-
-    ws.current.onmessage = async (event: MessageEvent) => {
-      // 文字列メッセージ (AudioInfo) の処理
-      if (typeof event.data === "string") {
-        setStatus('Audio info received. Sending "accept"...');
-        const parts = event.data.split(" ");
-        const channels = parseInt(parts[0], 10);
-        const sampleRate = parseInt(parts[1], 10);
-
-        if (audioContext.current?.sampleRate !== sampleRate) {
-          console.warn(
-            `Browser AudioContext SR (${audioContext.current?.sampleRate}) is different from server SR (${sampleRate}). Playback quality may be affected.`
-          );
-        }
-
-        setAudioInfo({ channels, sampleRate });
-        ws.current?.send("accept");
+      ws.onopen = () => {
         setIsConnected(true);
-        setStatus("Buffering initial data...");
-      }
-      // バイナリメッセージ (PCMデータ) の処理
-      else if (event.data instanceof Blob) {
-        const arrayBuffer = await event.data.arrayBuffer();
-        // 受信したデータをバッファに追加
-        bufferQueue.current.push(arrayBuffer);
+        setStatusMessage('接続成功。 "open" を送信します...');
+        ws.send("open");
+      };
 
-        // バッファが閾値に達したら再生ループを開始
-        if (
-          bufferQueue.current.length >= BUFFER_PLAYBACK_THRESHOLD &&
-          playerIntervalId.current === null
-        ) {
-          setStatus("Buffer filled. Starting playback...");
-          startPlayer();
+      ws.onmessage = (event: MessageEvent) => {
+        if (typeof event.data === "string") {
+          setStatusMessage(`サーバーからメッセージ受信: ${event.data}`);
+          const parts = event.data.split(" ");
+          if (parts.length === 2) {
+            const channel = parseInt(parts[0], 10);
+            const sample_rate = parseInt(parts[1], 10);
+
+            if (!isNaN(channel) && !isNaN(sample_rate)) {
+              const newAudioInfo = { channel, sample_rate };
+              setAudioInfo(newAudioInfo);
+              audioInfoRef.current = newAudioInfo;
+              setStatusMessage('AudioInfo 受信完了。"accept" を送信します。');
+              ws.send("accept");
+            } else {
+              setStatusMessage(
+                `エラー: 不正なAudioInfo形式です: ${event.data}`
+              );
+            }
+          }
+        } else if (event.data instanceof ArrayBuffer) {
+          if (!audioInfoRef.current) {
+            console.error("Received PCM data before AudioInfo was processed.");
+            setStatusMessage(
+              "エラー: AudioInfoの処理より先にPCMデータを受信しました"
+            );
+            return;
+          }
+
+          const pcmDataInt16 = new Int16Array(event.data);
+          const pcmDataFloat32 = new Float32Array(pcmDataInt16.length);
+          for (let i = 0; i < pcmDataInt16.length; i++) {
+            pcmDataFloat32[i] = pcmDataInt16[i] / 32768.0;
+          }
+
+          pcmBufferRef.current.push(pcmDataFloat32);
+          const currentBufferSize = pcmBufferRef.current.length;
+          setBufferSize(currentBufferSize);
+          setStatusMessage(
+            `PCMデータ受信。バッファサイズ: ${currentBufferSize}`
+          );
+
+          if (
+            currentBufferSize >= PLAYBACK_BUFFER_THRESHOLD &&
+            !isPlayingRef.current
+          ) {
+            startPlayback();
+          }
         }
-      }
-    };
+      };
 
-    ws.current.onclose = () => {
-      setStatus("Disconnected");
-      setIsConnected(false);
-      setAudioInfo(null);
-      stopPlayer();
-    };
+      ws.onclose = () => {
+        console.log("WebSocket connection closed.");
+        handleDisconnect();
+      };
 
-    ws.current.onerror = (error) => {
-      console.error("WebSocket error:", error);
-      setStatus("Connection Error");
-      setIsConnected(false);
-      stopPlayer();
-    };
+      ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        setStatusMessage(`WebSocketエラーが発生しました。`);
+        handleDisconnect();
+      };
+    } catch (error) {
+      console.error("Failed to create WebSocket:", error);
+      setStatusMessage(
+        `接続に失敗しました: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    }
   };
 
-  const handleDisconnect = () => {
-    ws.current?.close();
-  };
+  useEffect(() => {
+    return () => {
+      handleDisconnect();
+    };
+  }, [handleDisconnect]);
 
   return (
-    <div className="card">
-      <h1>Asynchronous VJ Client</h1>
-      <div>
-        {!isConnected ? (
-          <button onClick={handleConnect}>Connect & Play</button>
-        ) : (
-          <button onClick={handleDisconnect} disabled={!isConnected}>
-            Disconnect
-          </button>
-        )}
+    <div style={styles.container}>
+      <h1 style={styles.title}>React WebSocket Audio Client</h1>
+
+      <div style={styles.controlPanel}>
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          disabled={isConnected}
+          style={styles.input}
+          placeholder="例: ws://localhost:8080"
+        />
+        <button
+          onClick={isConnected ? handleDisconnect : handleConnect}
+          style={{
+            ...styles.button,
+            ...(isConnected ? styles.disconnectButton : styles.connectButton),
+          }}
+        >
+          {isConnected ? "切断" : "接続"}
+        </button>
       </div>
-      <div className="status">
-        <p>{status}</p>
-        {isConnected && <p>Buffer size: {bufferQueue.current.length}</p>}
-      </div>
-      {audioInfo && (
-        <div>
-          <p>
-            Channels: <strong>{audioInfo.channels}</strong> | Sample Rate:{" "}
-            <strong>{audioInfo.sampleRate}</strong> Hz
-          </p>
+
+      <div style={styles.statusPanel}>
+        <div style={styles.statusGrid}>
+          <span style={styles.statusLabel}>システムメッセージ:</span>
+          <span style={styles.statusValue}>{statusMessage}</span>
+
+          <span style={styles.statusLabel}>接続状態:</span>
+          <span style={styles.statusValue}>
+            {isConnected ? "オンライン" : "オフライン"}
+          </span>
+
+          <span style={styles.statusLabel}>オーディオ情報:</span>
+          <span style={styles.statusValue}>
+            {audioInfo
+              ? `${audioInfo.channel}ch @ ${audioInfo.sample_rate}Hz`
+              : "N/A"}
+          </span>
+
+          <span style={styles.statusLabel}>再生バッファサイズ:</span>
+          <span style={styles.statusValue}>{bufferSize}</span>
         </div>
-      )}
+      </div>
     </div>
   );
-}
+};
 
 export default App;

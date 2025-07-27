@@ -7,14 +7,12 @@ pub fn wave_analyzer() -> Result<AudioInfo, AnalyzerError> {
     // get headers
     let spec = reader.spec();
     tracing::info!(
-        "WAV: {}Hz, {}ch, {}bits",
+        "WAV: {}Hz, {}ch, {}bits, {:?}",
         spec.sample_rate,
         spec.channels,
-        spec.bits_per_sample
+        spec.bits_per_sample,
+        spec.sample_format
     );
 
-    Ok(AudioInfo {
-        channel: (spec.channels as u32),
-        sample_rate: spec.sample_rate,
-    })
+    Ok(spec.into())
 }

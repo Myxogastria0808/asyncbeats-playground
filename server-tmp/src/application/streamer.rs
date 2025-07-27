@@ -6,15 +6,12 @@ pub async fn wave_streamer(socket: &mut WebSocket) -> Result<(), StreamerError> 
     let mut reader = hound::WavReader::open("data/sample3.wav")?;
     // get headers
     let spec = reader.spec();
-    println!(
-        "WAV: {}Hz, {}, {}bits",
+    tracing::info!(
+        "WAV: {}Hz, {}ch, {}bits, {:?}",
         spec.sample_rate,
-        if spec.channels == 1 {
-            "monoral"
-        } else {
-            "stereo"
-        },
-        spec.bits_per_sample
+        spec.channels,
+        spec.bits_per_sample,
+        spec.sample_format
     );
     // get body (PCM samples)
     let mut samples = reader.samples::<i16>();
