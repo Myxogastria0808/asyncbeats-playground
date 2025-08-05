@@ -98,7 +98,7 @@ const PLAYBACK_BUFFER_THRESHOLD = 5;
 
 const App: React.FC = () => {
   // --- State Hooks ---
-  const [url, setUrl] = useState<string>("ws://localhost:8080");
+  const [url, setUrl] = useState<string>("ws://localhost:7001");
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>("未接続");
   const [audioInfo, setAudioInfo] = useState<AudioInfo | null>(null);
@@ -304,8 +304,7 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to create WebSocket:", error);
       setStatusMessage(
-        `接続に失敗しました: ${
-          error instanceof Error ? error.message : "Unknown error"
+        `接続に失敗しました: ${error instanceof Error ? error.message : "Unknown error"
         }`
       );
     }

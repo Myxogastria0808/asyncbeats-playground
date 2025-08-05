@@ -9,7 +9,7 @@ axum = { version = "0.8.4", features = ["ws"] }
 tokio = { version = "1.44.2", features = ["full"] }
 # error
 thiserror = "2.0.12"
-# analyze
+# python
 numpy = "0.25.0"
 pyo3 = {version = "0.25.1", features = ["auto-initialize"] }
 # messagepack

@@ -11,7 +11,7 @@ pub mod models;
 
 //* constant values *//
 static IP_ADDRESS: &str = "localhost";
-static PORT: u16 = 7000;
+static PORT: u16 = 7001;
 
 #[tokio::main]
 async fn main() -> Result<(), RootError> {

@@ -29,6 +29,12 @@ pub enum HandlerError {
     TokioJoinError(#[from] tokio::task::JoinError),
     #[error(transparent)]
     RmpSerdeEncodeError(#[from] rmp_serde::encode::Error),
+    #[error("ParseAudioInfoError: Invalid audio info format: {0}")]
+    ParseAudioInfoError(String),
+    #[error("AudioInfoUndefinedError: Audio info is not set")]
+    AudioInfoUndefinedError,
+    #[error(transparent)]
+    PyError(#[from] pyo3::PyErr),
 }
 
 impl From<HandlerError> for AppError {
@@ -81,6 +87,18 @@ impl From<HandlerError> for AppError {
             HandlerError::RmpSerdeEncodeError(e) => AppError {
                 status_code: StatusCode::INTERNAL_SERVER_ERROR,
                 message: format!("RmpSerdeEncodeError: {e}"),
+            },
+            HandlerError::ParseAudioInfoError(e) => AppError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("ParseAudioInfoError: Invalid audio info format: {e}"),
+            },
+            HandlerError::AudioInfoUndefinedError => AppError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                message: "AudioInfoUndefinedError: Audio info is not set".into(),
+            },
+            HandlerError::PyError(e) => AppError {
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!("PyError: {e}"),
             },
         }
     }

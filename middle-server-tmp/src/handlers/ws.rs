@@ -1,12 +1,14 @@
 use crate::{
     applications::{
-        client_to_server::handle_client_to_server,
-        pcm::{pcm_data_processing, window_data_processing},
-        server_to_client::handle_server_to_client,
+        client_to_server::handle_client_to_server, pcm::pcm_data_processing,
+        server_to_client::handle_server_to_client, window::window_data_processing,
     },
     errors::{app::AppError, handler::HandlerError},
     models::{
-        packet::WindowPacket, shared_state::RwLockSharedState, ws::MutexWebSocketClientWriter,
+        audio::{AudioInfo, RwLockAudioInfo},
+        packet::WindowPacket,
+        shared_state::RwLockSharedState,
+        ws::MutexWebSocketClientWriter,
     },
 };
 use axum::extract::ws::WebSocket;
@@ -74,6 +76,10 @@ pub async fn websocket_processing(client_socket: WebSocket) -> Result<(), AppErr
     let (window_tx, window_rx) =
         tokio::sync::mpsc::channel::<WindowPacket>(WINDOW_CHANNEL_CAPACITY as usize);
 
+    // create shared state for audio info
+    let shared_audio_info: RwLockAudioInfo =
+        Arc::new(tokio::sync::RwLock::new(AudioInfo::default()));
+
     //* --- Start independent tasks --- *//
     // [task1] client -> server
     let client_read_task = tokio::spawn(handle_client_to_server(client_reader, server_writer));
@@ -82,6 +88,7 @@ pub async fn websocket_processing(client_socket: WebSocket) -> Result<(), AppErr
         server_reader,
         pcm_tx,
         Arc::clone(&shared_client_writer),
+        Arc::clone(&shared_audio_info),
     ));
     // [task3] pcm data processing
     let pcm_processing_task = tokio::spawn(pcm_data_processing(
@@ -94,6 +101,7 @@ pub async fn websocket_processing(client_socket: WebSocket) -> Result<(), AppErr
     let window_processing_task = tokio::spawn(window_data_processing(
         window_rx,
         Arc::clone(&shared_client_writer),
+        Arc::clone(&shared_audio_info),
     ));
 
     //* When one of the tasks is completed, tokio make the other tasks also complete. *//

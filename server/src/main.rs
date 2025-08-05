@@ -11,7 +11,7 @@ pub mod models;
 
 // Domain
 const IP_ADDRESS: &str = "localhost";
-const PORT: u16 = 5000;
+const PORT: u16 = 5001;
 
 #[tokio::main]
 async fn main() -> Result<(), RootError> {

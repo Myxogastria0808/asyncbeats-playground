@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::connect_async;
 
 //* constant values *//
-static SERVER_URL: &str = "ws://localhost:5000";
+static SERVER_URL: &str = "ws://localhost:5001";
 static WINDOW_SIZE: u64 = 200;
 static SLIDE_SIZE: u64 = 100;
 static PCM_CHANNEL_CAPACITY: u64 = 1000;

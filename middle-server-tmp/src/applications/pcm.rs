@@ -1,12 +1,4 @@
-use crate::{
-    errors::handler::HandlerError,
-    models::{
-        packet::{MessagePack, WindowPacket},
-        ws::MutexWebSocketClientWriter,
-    },
-};
-use axum::extract::ws::Message;
-use futures_util::SinkExt;
+use crate::{errors::handler::HandlerError, models::packet::WindowPacket};
 use std::collections::VecDeque;
 
 // [task3] pcm data processing
@@ -47,32 +39,6 @@ pub async fn pcm_data_processing(
             // reset send buffer
             window_packet.clear();
         }
-    }
-    Ok(())
-}
-
-// TODO: ここで時間のかかる解析処理を実行する
-pub async fn window_data_processing(
-    mut window_rx: tokio::sync::mpsc::Receiver<WindowPacket>,
-    shared_client_writer: MutexWebSocketClientWriter,
-) -> Result<(), HandlerError> {
-    //? Receiver (Consumer) //
-    while let Some(window_packet) = window_rx.recv().await {
-        let binary = window_packet.0;
-
-        // let events = analyze(&window_packet);
-        // let packet = VJDataPacket { pcm_data: window_packet.clone(), events };
-        // let serialized_packet = rmp_serde::to_vec(&packet).unwrap();
-
-        //* step9: create message pack *//
-        let message_pack = rmp_serde::to_vec_named(&MessagePack {
-            pcm: binary.clone(),
-            message: "Processed PCM data".to_string(),
-        })?;
-
-        //* step10: send messagepack to client *//
-        let mut writer = shared_client_writer.lock().await;
-        writer.send(Message::Binary(message_pack.into())).await?;
     }
     Ok(())
 }
